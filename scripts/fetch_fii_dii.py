@@ -102,72 +102,22 @@ def fetch_fii_dii_data():
     ).reset_index(drop=True)
 
 
-def _long_to_wide(long_df):
-    """
-    Converts long-format rows (one row per date+category) into wide format:
-    one row per date, with DII columns followed by FII/FPI columns —
-    matching the historical archive layout:
-    date, category, buy_value, sell_value, net_value, category, buy_value, sell_value, net_value
-    """
-    dii = long_df[long_df["category"] == "DII"][
-        ["date", "category", "buy_value", "sell_value", "net_value"]
-    ]
-    fii = long_df[long_df["category"] == "FII/FPI"][
-        ["date", "category", "buy_value", "sell_value", "net_value"]
-    ]
-    dii.columns = ["date", "c1", "b1", "s1", "n1"]
-    fii.columns = ["date", "c2", "b2", "s2", "n2"]
-
-    wide = pd.merge(dii, fii, on="date", how="outer").sort_values("date").reset_index(drop=True)
-    wide.columns = [
-        "date", "category", "buy_value", "sell_value", "net_value",
-        "category", "buy_value", "sell_value", "net_value",
-    ]
-    return wide
-
-
-def _wide_to_long(wide_df):
-    """Reverses _long_to_wide, for internal use when appending new data."""
-    # wide_df has duplicate column names; access by position instead of name
-    cols = wide_df.columns.tolist()
-    dii = wide_df.iloc[:, [0, 1, 2, 3, 4]].copy()
-    dii.columns = ["date", "category", "buy_value", "sell_value", "net_value"]
-    fii = wide_df.iloc[:, [0, 5, 6, 7, 8]].copy()
-    fii.columns = ["date", "category", "buy_value", "sell_value", "net_value"]
-    long_df = pd.concat([dii, fii], ignore_index=True)
-    long_df["date"] = pd.to_datetime(long_df["date"], dayfirst=True)
-    return long_df.dropna(subset=["category"]).sort_values(["date", "category"]).reset_index(drop=True)
-
-
 def append_to_archive(new_df, output_file=OUTPUT_FILE):
     """
-    Appends new_df (long format) to the CSV archive, storing the archive itself
-    in WIDE format (one row per date, DII then FII/FPI columns side by side),
-    avoiding duplicate dates.
+    Appends new_df to the CSV archive, avoiding duplicate (date, category) rows.
     """
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
 
     if os.path.exists(output_file):
-        existing_wide = pd.read_csv(output_file)
-        existing_long = _wide_to_long(existing_wide)
-        combined_long = pd.concat([existing_long, new_df], ignore_index=True)
-        combined_long = combined_long.drop_duplicates(subset=["date", "category"], keep="last")
+        existing_df = pd.read_csv(output_file, parse_dates=["date"])
+        combined = pd.concat([existing_df, new_df], ignore_index=True)
+        combined = combined.drop_duplicates(subset=["date", "category"], keep="last")
+        combined = combined.sort_values(["date", "category"]).reset_index(drop=True)
     else:
-        combined_long = new_df
+        combined = new_df
 
-    combined_long = combined_long.sort_values(["date", "category"]).reset_index(drop=True)
-    combined_wide = _long_to_wide(combined_long)
-
-    # Write with explicit duplicate headers (pandas would otherwise suffix them)
-    combined_wide_out = combined_wide.copy()
-    combined_wide_out["date"] = pd.to_datetime(combined_wide_out["date"]).dt.strftime("%d-%m-%Y")
-    header = "date,category,buy_value,sell_value,net_value,category,buy_value,sell_value,net_value\n"
-    with open(output_file, "w") as f:
-        f.write(header)
-        for _, row in combined_wide_out.iterrows():
-            f.write(",".join(str(v) for v in row.values) + "\n")
-
-    return combined_long
+    combined.to_csv(output_file, index=False)
+    return combined
 
 
 def show_date(date_str, output_file=OUTPUT_FILE):
@@ -176,13 +126,12 @@ def show_date(date_str, output_file=OUTPUT_FILE):
         print(f"No archive found yet at {output_file}.")
         return
 
-    wide = pd.read_csv(output_file)
-    long_df = _wide_to_long(wide)
-    target = long_df[long_df["date"] == pd.to_datetime(date_str, dayfirst=True)]
+    df = pd.read_csv(output_file, parse_dates=["date"])
+    target = df[df["date"] == pd.to_datetime(date_str)]
 
     if target.empty:
         print(f"No data found for {date_str} in the archive.")
-        print(f"Archive currently covers {long_df['date'].min().date()} to {long_df['date'].max().date()}.")
+        print(f"Archive currently covers {df['date'].min().date()} to {df['date'].max().date()}.")
     else:
         print(f"FII/DII data for {date_str}:")
         print(target.to_string(index=False))
@@ -204,7 +153,7 @@ def main():
           f"{new_df['date'].min().date()} to {new_df['date'].max().date()}")
 
     combined = append_to_archive(new_df)
-    print(f"Archive updated: {OUTPUT_FILE}  (total trading days now: {combined['date'].nunique()})")
+    print(f"Archive updated: {OUTPUT_FILE}  (total rows now: {len(combined)})")
 
     latest_date = combined["date"].max()
     latest = combined[combined["date"] == latest_date]
