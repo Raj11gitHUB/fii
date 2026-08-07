@@ -5,7 +5,7 @@ on:
     # Runs at 13:00 UTC = 18:30 IST, Monday-Friday (after NSE data is usually published).
     # GitHub's scheduler can lag by several minutes to an hour during busy periods,
     # so treat this as "sometime in the evening IST", not exact.
-    - cron: "0 13 * * 1-5"
+    - cron: "50 14 * * 1-5"
   workflow_dispatch: {}   # lets you manually trigger a run from the Actions tab, for testing
 
 permissions:
